@@ -50,30 +50,72 @@ if uploaded_files:
     else:
         with st.spinner("Processing volume aggregation matrices and compiling visual worksheets..."):
             try:
-                # Read Permanent Master Directory with encoding protection against hidden Excel BOM markers
-                master_df = pd.read_csv(MASTER_FILE_NAME, encoding='utf-8-sig')
+                # Read Master file with comprehensive multi-encoding fallback safeguards
+                try:
+                    master_df = pd.read_csv(MASTER_FILE_NAME, encoding='utf-8-sig')
+                except UnicodeDecodeError:
+                    master_df = pd.read_csv(MASTER_FILE_NAME, encoding='cp1252')
                 
-                # Rigid, Explicit Positional Mapping to completely avoid non-unique name duplicate bugs
-                # We rename columns purely based on their left-to-right position order rather than names
-                if len(master_df.columns) >= 5:
-                    master_df.columns = ['Sub_Division', 'Sub_Office', 'Office_Name', 'Office_ID', 'Office_Type'] + list(master_df.columns[5:])
-                else:
-                    st.error("🚨 Master Directory Structure Error: The file must contain at least 5 standard columns: Sub Division, Sub Office, Branch Office, Office ID, office-type-code.")
+                # Normalize column headers completely (lowercase, strip whitespace, remove punctuation characters)
+                orig_cols = list(master_df.columns)
+                normalized_headers = [str(c).lower().replace("-", " ").replace("_", " ").strip() for c in orig_cols]
+                
+                # Dynamic Key Extraction (Self-Healing Lookup Strategy)
+                # This scans headers contextually, completely removing index position or exact casing dependencies
+                col_mapping = {}
+                for idx, h in enumerate(normalized_headers):
+                    if "sub division" in h: col_mapping['Sub_Division'] = orig_cols[idx]
+                    elif "sub office" in h: col_mapping['Sub_Office'] = orig_cols[idx]
+                    elif "branch office" in h or ("office" in h and "name" in h and h != "sub office"): col_mapping['Office_Name'] = orig_cols[idx]
+                    elif "office id" in h or "office_id" in h: col_mapping['Office_ID'] = orig_cols[idx]
+                    elif "type" in h or "code" in h: col_mapping['Office_Type'] = orig_cols[idx]
+
+                required_targets = ['Sub_Division', 'Sub_Office', 'Office_Name', 'Office_ID', 'Office_Type']
+                missing_targets = [t for t in required_targets if t not in col_mapping]
+                
+                if missing_targets:
+                    st.error(f"🚨 Master Alignment Error: Missing target keys: {missing_targets}. Checked headers: {orig_cols}")
+                    st.warning("Please ensure your Master File contains column labels matching: Sub Division, Sub Office, Office Name, Office ID, and Office Type.")
                     st.stop()
                 
+                # Filter and reorder dataset using our safe extracted dictionary maps
+                f_df = pd.DataFrame({
+                    'Sub_Division': master_df[col_mapping['Sub_Division']],
+                    'Sub_Office': master_df[col_mapping['Sub_Office']],
+                    'Office_Name': master_df[col_mapping['Office_Name']],
+                    'Office_ID': master_df[col_mapping['Office_ID']],
+                    'Office_Type': master_df[col_mapping['Office_Type']]
+                })
+
                 # Data type coercion to protect joins
-                master_df.dropna(subset=['Office_ID'], inplace=True)
-                master_df['Office_ID'] = master_df['Office_ID'].astype(str).str.strip()
-                master_df = master_df.drop_duplicates(subset=['Office_ID'])
+                f_df.dropna(subset=['Office_ID'], inplace=True)
+                f_df['Office_ID'] = f_df['Office_ID'].astype(str).str.strip().str.replace(".0", "", regex=False)
+                f_df = f_df.drop_duplicates(subset=['Office_ID'])
                 
                 # Safe transit logs parsing engine
                 def read_transit_data(keywords):
                     target = [k for k in files.keys() if all(x in k for x in keywords)]
                     if not target:
                         return pd.DataFrame(columns=['office_id', 'Received', 'D0 Delivered', 'D0 Redirected', 'D0 Returned'])
-                    df_raw = pd.read_csv(files[target[0]])
-                    df_raw.columns = [c.strip() for c in df_raw.columns]
-                    df_raw['office_id'] = df_raw['office_id'].astype(str).str.strip()
+                    
+                    try:
+                        df_raw = pd.read_csv(files[target[0]], encoding='utf-8-sig')
+                    except UnicodeDecodeError:
+                        df_raw = pd.read_csv(files[target[0]], encoding='cp1252')
+                        
+                    # Universal Header Casing Safeguard for Transit files
+                    df_raw.columns = [str(c).strip() for c in df_raw.columns]
+                    id_col = [c for c in df_raw.columns if 'office' in c.lower() and 'id' in c.lower()]
+                    rec_col = [c for c in df_raw.columns if 'received' in c.lower()]
+                    
+                    if not id_col:
+                        id_col = [df_raw.columns[0]] # Fallback to first position if lookups drop out
+                    if not rec_col:
+                        rec_col = [c for c in df_raw.columns if 'rec' in c.lower()]
+                        
+                    df_raw['office_id'] = df_raw[id_col[0]].astype(str).str.strip().str.replace(".0", "", regex=False)
+                    
+                    # Group metric keys securely
                     cols = ['Received', 'D0 Delivered', 'D0 Redirected', 'D0 Returned']
                     avail = [c for c in cols if c in df_raw.columns]
                     return df_raw.groupby('office_id')[avail].sum().reset_index()
@@ -98,9 +140,14 @@ if uploaded_files:
                 # Single snapshots parsing
                 prod_target = [k for k in files.keys() if "Productivity" in k]
                 if prod_target:
-                    p_df = pd.read_csv(files[prod_target[0]])
+                    try:
+                        p_df = pd.read_csv(files[prod_target[0]], encoding='utf-8-sig')
+                    except UnicodeDecodeError:
+                        p_df = pd.read_csv(files[prod_target[0]], encoding='cp1252')
+                        
                     p_df.columns = [c.strip() for c in p_df.columns]
-                    p_df['office-id'] = p_df['office-id'].astype(str).str.strip()
+                    p_id = [c for c in p_df.columns if 'office' in c.lower() and 'id' in c.lower()][0]
+                    p_df['office-id'] = p_df[p_id].astype(str).str.strip().str.replace(".0", "", regex=False)
                     p_df['Prod_Rec'] = p_df['invoice-count']
                     p_df['Prod_Disp'] = p_df['delivery-count'] + p_df['redirection-count'] + p_df['return-count']
                     p_grouped = p_df.groupby('office-id')[['Prod_Rec', 'Prod_Disp']].sum().reset_index()
@@ -111,9 +158,14 @@ if uploaded_files:
                     t = [k for k in files.keys() if "DSS" in k and ("to" in k if not is_daily else "to" not in k)]
                     if not t:
                         return pd.DataFrame(columns=['office_id', 'pdm', 'dss'])
-                    df_d = pd.read_csv(files[t[0]])
+                    try:
+                        df_d = pd.read_csv(files[t[0]], encoding='utf-8-sig')
+                    except UnicodeDecodeError:
+                        df_d = pd.read_csv(files[t[0]], encoding='cp1252')
+                        
                     df_d.columns = [c.strip() for c in df_d.columns]
-                    df_d['office_id'] = df_d['office_id'].astype(str).str.strip()
+                    d_id = [c for c in df_d.columns if 'office' in c.lower() and 'id' in c.lower()][0]
+                    df_d['office_id'] = df_d[d_id].astype(str).str.strip().str.replace(".0", "", regex=False)
                     return df_d.groupby('office_id')[['total_pdm_art_count', 'total_dss_art_count']].sum().reset_index().rename(
                         columns={'total_pdm_art_count': 'pdm', 'total_dss_art_count': 'dss'}
                     )
@@ -122,8 +174,6 @@ if uploaded_files:
                 dss_d = get_dss_log(is_daily=True)
 
                 # Base Compilation DataFrame
-                f_df = master_df[['Sub_Division', 'Sub_Office', 'Office_Name', 'Office_ID', 'Office_Type']].copy()
-
                 f_df = f_df.merge(all_prod, left_on='Office_ID', right_on='office_id', how='left').drop(columns=['office_id'])
                 f_df['AP_Disp'] = f_df.get('D0 Delivered', 0) + f_df.get('D0 Redirected', 0) + f_df.get('D0 Returned', 0)
                 f_df.rename(columns={'Received': 'AP_Rec'}, inplace=True)
@@ -426,15 +476,21 @@ if uploaded_files:
                 for k, v in w_sum.items():
                     ws4.column_dimensions[k].width = v
 
-                # SHEET 5: ACTIONS DEFAULTER AUDIT LIST WITH UPDATED THRESHOLDS
+                # SHEET 5: ACTIONS DEFAULTER AUDIT LIST WITH STR/FLOAT COMPLIANCE DEFENSE
                 ws5 = wb.create_sheet(title="Defaulters List")
                 setup_headers(ws5, f"Operational KPI Defaulters Audit List — {rep_date}")
                 
-                # Condition: All Product D+0 < 90% OR Cumulative DSS Usage < 80% Check
-                defcheck = f_df[
-                    ((f_df['AP_Pct'] != "-") & (f_df['AP_Pct'] < 0.90)) | 
-                    ((f_df['DSS_C_Pct'] != "-") & (f_df['DSS_C_Pct'] < 0.80))
-                ].sort_values(by=['Sub_Division', 'Sub_Office', 'Office_Name'])
+                # Defaulter extraction check block with rigorous numeric validation logic checks
+                def filter_defaulters(row):
+                    ap_val = row['AP_Pct']
+                    dss_val = row['DSS_C_Pct']
+                    if isinstance(ap_val, (int, float)) and ap_val < 0.90:
+                        return True
+                    if isinstance(dss_val, (int, float)) and dss_val < 0.80:
+                        return True
+                    return False
+
+                defcheck = f_df[f_df.apply(filter_defaulters, axis=1)].sort_values(by=['Sub_Division', 'Sub_Office', 'Office_Name'])
 
                 d_row, d_sr = 5, 1
                 for _, row in defcheck.iterrows():
