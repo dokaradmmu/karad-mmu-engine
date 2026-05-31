@@ -80,7 +80,6 @@ if uploaded_files:
                     
                     if missing_targets:
                         st.error(f"🚨 Master Alignment Error: Missing target keys: {missing_targets}. Checked headers: {orig_cols}")
-                        st.warning("Please ensure your Master File contains column labels matching: Sub Division, Sub Office, Office Name, Office ID, and Office Type.")
                         st.stop()
                     
                     # Filter and reorder dataset using our safe extracted dictionary maps
@@ -108,16 +107,14 @@ if uploaded_files:
                         except UnicodeDecodeError:
                             df_raw = pd.read_csv(files[target[0]], encoding='cp1252')
                             
-                        # Universal Header Casing Safeguard for Transit files
                         df_raw.columns = [str(c).strip() for c in df_raw.columns]
                         id_col = [c for c in df_raw.columns if 'office' in c.lower() and 'id' in c.lower()]
                         
                         if not id_col:
-                            id_col = [df_raw.columns[0]] # Fallback to first position if lookups drop out
+                            id_col = [df_raw.columns[0]]
                             
                         df_raw['office_id'] = df_raw[id_col[0]].astype(str).str.strip().str.replace(".0", "", regex=False)
                         
-                        # Group metric keys securely
                         cols = ['Received', 'D0 Delivered', 'D0 Redirected', 'D0 Returned']
                         avail = [c for c in cols if c in df_raw.columns]
                         return df_raw.groupby('office_id')[avail].sum().reset_index()
@@ -417,110 +414,137 @@ if uploaded_files:
                             if col >= 6:
                                 cell.alignment = align_center
                                 cell.number_format = '0.0%' if col in [7,9,11,13,14,15] else '#,##0'
-                        set_widths(ws)
-                        ws.freeze_panes = "F5"
+                        set_widths(wb.active) # Reference update
+                        
+                    set_widths(ws)
+                    ws.freeze_panes = "F5"
+                    
+                    # Return overall aggregated rates for the on-screen live Streamlit snapshot display layout
+                    div_summary_metrics = {
+                        'ap_rec': gt['ap_r'],
+                        'ap_pct': (gt['ap_d'] / gt['ap_r'] if gt['ap_r'] > 0 else 0),
+                        'prod_rec': gt['pr_r'],
+                        'prod_pct': (gt['pr_d'] / gt['pr_r'] if gt['pr_r'] > 0 else 0),
+                        'dss_d_pct': (gt['dd_d'] / gt['dd_p'] if gt['dd_p'] > 0 else 0),
+                        'dss_c_pct': (gt['dc_d'] / gt['dc_p'] if gt['dc_p'] > 0 else 0)
+                    }
+                    return div_summary_metrics
 
-                    render_formatted_tab("SPO & HPO", f"Consolidated MMU Report (Excluding B.Os) — {rep_date}", 'EX')
-                    render_formatted_tab("Only BOs", f"Consolidated MMU Report (Only Branch Offices) — {rep_date}", 'ONLY')
+                m_ex = render_formatted_tab("SPO & HPO", f"Consolidated MMU Report (Excluding B.Os) — {rep_date}", 'EX')
+                render_formatted_tab("Only BOs", f"Consolidated MMU Report (Only Branch Offices) — {rep_date}", 'ONLY')
 
-                    # SHEET 4: EXECUTIVE AT A GLANCE MANAGEMENT SUMMARY
-                    ws4 = wb.create_sheet(title="At A Glance")
-                    ws4.sheet_view.showGridLines = False
-                    ws4.row_dimensions[1].height = 32
-                    ws4.row_dimensions[2].height = 22
-                    ws4.row_dimensions[3].height = 26
+                # SHEET 4: EXECUTIVE AT A GLANCE MANAGEMENT SUMMARY
+                ws4 = wb.create_sheet(title="At A Glance")
+                ws4.sheet_view.showGridLines = False
+                ws4.row_dimensions[1].height = 32
+                ws4.row_dimensions[2].height = 22
+                ws4.row_dimensions[3].height = 26
 
-                    ws4.append([f"Sub Division Wise Executive Performance Summary — {rep_date}"] + [""] * 13)
-                    ws4.merge_cells("A1:N1")
-                    ws4.cell(row=1, column=1).font = font_title
-                    ws4.cell(row=1, column=1).fill = fill_title
-                    ws4.cell(row=1, column=1).alignment = align_center
+                ws4.append([f"Sub Division Wise Executive Performance Summary — {rep_date}"] + [""] * 13)
+                ws4.merge_cells("A1:N1")
+                ws4.cell(row=1, column=1).font = font_title
+                ws4.cell(row=1, column=1).fill = fill_title
+                ws4.cell(row=1, column=1).alignment = align_center
 
-                    ws4.append(["", "", "Excluding Branch Offices (HPOs & SPOs)", "", "", "", "", "", "Only Branch Offices (BPOs)", "", "", "", "", ""])
-                    ws4.merge_cells("C2:H2")
-                    ws4.merge_cells("I2:N2")
-                    for col in range(1, 15):
-                        cell = ws4.cell(row=2, column=col)
-                        if col >= 3:
-                            cell.fill = fill_super
-                            cell.font = font_header
-                            cell.alignment = align_center
-
-                    ws4_h = ["Sr No.", "Sub Division Name", "Total Offices", "Docs Rec", "Docs D+0 %", "Par Rec", "Par D+0 %", "DSS Cum %",
-                             "Total Offices", "Docs Rec", "Docs D+0 %", "Par Rec", "Par D+0 %", "DSS Cum %"]
-                    ws4.append(ws4_h)
-                    for col in range(1, 15):
-                        cell = ws4.cell(row=3, column=col)
-                        cell.fill = fill_header
+                ws4.append(["", "", "Excluding Branch Offices (HPOs & SPOs)", "", "", "", "", "", "Only Branch Offices (BPOs)", "", "", "", "", ""])
+                ws4.merge_cells("C2:H2")
+                ws4.merge_cells("I2:N2")
+                for col in range(1, 15):
+                    cell = ws4.cell(row=2, column=col)
+                    if col >= 3:
+                        cell.fill = fill_super
                         cell.font = font_header
                         cell.alignment = align_center
-                        cell.border = thin_border
 
-                    sub_div_list = sorted(list(f_df['Sub_Division'].unique()))
-                    idx_s, odd_line = 4, True
-                    for i, s_div in enumerate(sub_div_list, 1):
-                        df_ex = f_df[(f_df['Sub_Division'] == s_div) & (f_df['Office_Type'] != 'BPO')]
-                        df_bo = f_df[(f_df['Sub_Division'] == s_div) & (f_df['Office_Type'] == 'BPO')]
-                        
-                        row_v = [
-                            i, s_div,
-                            len(df_ex), df_ex['Doc_Rec'].sum(), (df_ex['Doc_Disp'].sum()/df_ex['Doc_Rec'].sum() if df_ex['Doc_Rec'].sum()>0 else "-"), df_ex['Par_Rec'].sum(), (df_ex['Par_Disp'].sum()/df_ex['Par_Rec'].sum() if df_ex['Par_Rec'].sum()>0 else "-"), (df_ex['DSS_C_Dss'].sum()/df_ex['DSS_C_Pdm'].sum() if df_ex['DSS_C_Pdm'].sum()>0 else "-"),
-                            len(df_bo), df_bo['Doc_Rec'].sum(), (df_bo['Doc_Disp'].sum()/df_bo['Doc_Rec'].sum() if df_bo['Doc_Rec'].sum()>0 else "-"), df_bo['Par_Rec'].sum(), (df_bo['Par_Disp'].sum()/df_bo['Par_Rec'].sum() if df_bo['Par_Rec'].sum()>0 else "-"), (df_bo['DSS_C_Dss'].sum()/df_bo['DSS_C_Pdm'].sum() if df_bo['DSS_C_Pdm'].sum()>0 else "-")
-                        ]
-                        ws4.append(row_v)
-                        ws4.row_dimensions[idx_s].height = 20
-                        for col in range(1, 15):
-                            format_cell(ws4.cell(row=idx_s, column=col), row_v[col-1], (col in [5,7,8,11,13,14]), odd_line, dss_col=(col in [8,14]))
-                        idx_s += 1
-                        odd_line = not odd_line
+                ws4_h = ["Sr No.", "Sub Division Name", "Total Offices", "Docs Rec", "Docs D+0 %", "Par Rec", "Par D+0 %", "DSS Cum %",
+                         "Total Offices", "Docs Rec", "Docs D+0 %", "Par Rec", "Par D+0 %", "DSS Cum %"]
+                ws4.append(ws4_h)
+                for col in range(1, 15):
+                    cell = ws4.cell(row=3, column=col)
+                    cell.fill = fill_header
+                    cell.font = font_header
+                    cell.alignment = align_center
+                    cell.border = thin_border
 
-                    w_sum = {'A': 8, 'B': 22, 'C': 12, 'D': 12, 'E': 14, 'F': 12, 'G': 14, 'H': 14, 'I': 12, 'J': 12, 'K': 14, 'L': 12, 'M': 14, 'N': 14}
-                    for k, v in w_sum.items():
-                        ws4.column_dimensions[k].width = v
-
-                    # SHEET 5: ACTIONS DEFAULTER AUDIT LIST WITH STR/FLOAT COMPLIANCE DEFENSE
-                    ws5 = wb.create_sheet(title="Defaulters List")
-                    setup_headers(ws5, f"Operational KPI Defaulters Audit List — {rep_date}")
+                sub_div_list = sorted(list(f_df['Sub_Division'].unique()))
+                idx_s, odd_line = 4, True
+                for i, s_div in enumerate(sub_div_list, 1):
+                    df_ex = f_df[(f_df['Sub_Division'] == s_div) & (f_df['Office_Type'] != 'BPO')]
+                    df_bo = f_df[(f_df['Sub_Division'] == s_div) & (f_df['Office_Type'] == 'BPO')]
                     
-                    # Defaulter extraction check block with rigorous numeric validation logic checks
-                    def filter_defaulters(row):
-                        ap_val = row['AP_Pct']
-                        dss_val = row['DSS_C_Pct']
-                        if isinstance(ap_val, (int, float)) and ap_val < 0.90:
-                            return True
-                        if isinstance(dss_val, (int, float)) and dss_val < 0.80:
-                            return True
-                        return False
+                    row_v = [
+                        i, s_div,
+                        len(df_ex), df_ex['Doc_Rec'].sum(), (df_ex['Doc_Disp'].sum()/df_ex['Doc_Rec'].sum() if df_ex['Doc_Rec'].sum()>0 else "-"), df_ex['Par_Rec'].sum(), (df_ex['Par_Disp'].sum()/df_ex['Par_Rec'].sum() if df_ex['Par_Rec'].sum()>0 else "-"), (df_ex['DSS_C_Dss'].sum()/df_ex['DSS_C_Pdm'].sum() if df_ex['DSS_C_Pdm'].sum()>0 else "-"),
+                        len(df_bo), df_bo['Doc_Rec'].sum(), (df_bo['Doc_Disp'].sum()/df_bo['Doc_Rec'].sum() if df_bo['Doc_Rec'].sum()>0 else "-"), df_bo['Par_Rec'].sum(), (df_bo['Par_Disp'].sum()/df_bo['Par_Rec'].sum() if df_bo['Par_Rec'].sum()>0 else "-"), (df_bo['DSS_C_Dss'].sum()/df_bo['DSS_C_Pdm'].sum() if df_bo['DSS_C_Pdm'].sum()>0 else "-")
+                    ]
+                    ws4.append(row_v)
+                    ws4.row_dimensions[idx_s].height = 20
+                    for col in range(1, 15):
+                        format_cell(ws4.cell(row=idx_s, column=col), row_v[col-1], (col in [5,7,8,11,13,14]), odd_line, dss_col=(col in [8,14]))
+                    idx_s += 1
+                    odd_line = not odd_line
 
-                    defcheck = f_df[f_df.apply(filter_defaulters, axis=1)].sort_values(by=['Sub_Division', 'Sub_Office', 'Office_Name'])
+                w_sum = {'A': 8, 'B': 22, 'C': 12, 'D': 12, 'E': 14, 'F': 12, 'G': 14, 'H': 14, 'I': 12, 'J': 12, 'K': 14, 'L': 12, 'M': 14, 'N': 14}
+                for k, v in w_sum.items():
+                    ws4.column_dimensions[k].width = v
 
-                    d_row, d_sr = 5, 1
-                    for _, row in defcheck.iterrows():
-                        v = [d_sr, row['Sub_Division'], row['Sub_Office'], row['Office_Name'], row['Office_Type'],
-                             row['AP_Rec'], row['AP_Pct'], row['Doc_Rec'], row['Doc_Pct'], row['Par_Rec'], row['Par_Pct'],
-                             row['Prod_Rec'], row['Prod_Pct'], row['DSS_C_Pct'], row['DSS_D_Pct']]
-                        ws5.append(v)
-                        ws5.row_dimensions[d_row].height = 19
-                        for col in range(1, 16):
-                            format_cell(ws5.cell(row=d_row, column=col), v[col-1], (col in [7,9,11,13,14,15]), is_o=True, dss_col=(col==14))
-                        d_row += 1
-                        d_sr += 1
-                    set_widths(ws5)
-                    ws5.freeze_panes = "F5"
+                # SHEET 5: ACTIONS DEFAULTER AUDIT LIST WITH STR/FLOAT COMPLIANCE DEFENSE
+                ws5 = wb.create_sheet(title="Defaulters List")
+                setup_headers(ws5, f"Operational KPI Defaulters Audit List — {rep_date}")
+                
+                def filter_defaulters(row):
+                    ap_val = row['AP_Pct']
+                    dss_val = row['DSS_C_Pct']
+                    if isinstance(ap_val, (int, float)) and ap_val < 0.90:
+                        return True
+                    if isinstance(dss_val, (int, float)) and dss_val < 0.80:
+                        return True
+                    return False
 
-                    # 5. MEMORY EXPORT STRATEGY FOR WEB DOWNLOAD
-                    out_name = f"Consolidated_MMU_Report_{rep_date}.xlsx"
-                    wb.save(out_name)
-                    
-                    with open(out_name, "rb") as file_bytes:
-                        st.success("🎉 Processing complete! Your report is compiled and ready for download.")
-                        st.download_button(
-                            label="📥 Download Consolidated Excel Report",
-                            data=file_bytes,
-                            file_name=out_name,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    os.remove(out_name)
+                defcheck = f_df[f_df.apply(filter_defaulters, axis=1)].sort_values(by=['Sub_Division', 'Sub_Office', 'Office_Name'])
 
-                except Exception as error:
-                    st.error(f"An operational pipeline compiling error occurred: {str(error)}")
+                d_row, d_sr = 5, 1
+                for _, row in defcheck.iterrows():
+                    v = [d_sr, row['Sub_Division'], row['Sub_Office'], row['Office_Name'], row['Office_Type'],
+                         row['AP_Rec'], row['AP_Pct'], row['Doc_Rec'], row['Doc_Pct'], row['Par_Rec'], row['Par_Pct'],
+                         row['Prod_Rec'], row['Prod_Pct'], row['DSS_C_Pct'], row['DSS_D_Pct']]
+                    ws5.append(v)
+                    ws5.row_dimensions[d_row].height = 19
+                    for col in range(1, 16):
+                        format_cell(ws5.cell(row=d_row, column=col), v[col-1], (col in [7,9,11,13,14,15]), is_o=True, dss_col=(col==14))
+                    d_row += 1
+                    d_sr += 1
+                set_widths(ws5)
+                ws5.freeze_panes = "F5"
+
+                # 5. STREAMLIT ON-SCREEN SNAPSHOT EXECUTIVE VIEW 
+                # This injects a clean summary layout section right inside the browser window
+                st.markdown(f"### 📊 Karad Division Executive Snapshot — {rep_date}")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Total Range Volume", f"{m_ex['ap_rec']:,}")
+                col2.metric("All Products D+0", f"{m_ex['ap_pct']:.1%}")
+                col3.metric("Daily Productivity", f"{m_ex['prod_pct']:.1%}")
+                col4.metric("Daily DSS Usage", f"{m_ex['dss_d_pct']:.1%}")
+                
+                # Compliance Alert Callouts based on target metrics
+                if m_ex['ap_pct'] < 0.90 or m_ex['dss_d_pct'] < 0.80:
+                    st.warning(f"⚠️ Notice: Division performance averages have dropped below baseline targets. {len(defcheck)} active offices flagged in the audit exception sheet.")
+                else:
+                    st.success("💪 Core Division tracking benchmarks are currently fully optimized.")
+
+                # 6. MEMORY EXPORT STRATEGY FOR WEB DOWNLOAD
+                out_name = f"Consolidated_MMU_Report_{rep_date}.xlsx"
+                wb.save(out_name)
+                
+                with open(out_name, "rb") as file_bytes:
+                    st.download_button(
+                        label="📥 Download Consolidated Excel Report",
+                        data=file_bytes,
+                        file_name=out_name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                os.remove(out_name)
+
+            except Exception as error:
+                st.error(f"An operational pipeline compiling error occurred: {str(error)}")
