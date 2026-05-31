@@ -22,8 +22,8 @@ uploaded_files = st.file_uploader(
     type=['csv']
 )
 
-# Hardcoded Permanent Master Directory Path inside GitHub
-MASTER_FILE_NAME = "Updated Office Names 29.05.2026.xlsx - Combined and Updated.csv"
+# Enforced Absolute Unified Backend Name Strategy
+MASTER_FILE_NAME = "Master_Directory.csv"
 
 # 2. OPERATIONAL CORE UTILITIES
 def extract_report_date(files_dict):
