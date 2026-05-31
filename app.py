@@ -13,14 +13,17 @@ st.title("📬 Karad Division — MMU Report Engine")
 st.caption("Department of Posts | India Post, Maharashtra Circle")
 st.markdown("---")
 
-st.markdown("### 📥 Upload Daily Source Files")
-st.info("💡 You can select all 8 required files and drop them into the box simultaneously.")
+st.markdown("### 📥 Upload Daily Data Logs")
+st.info("💡 Select your 7 daily transit and compliance files and drop them here simultaneously. The Master Office Directory is permanently handled by the system backend.")
 
 uploaded_files = st.file_uploader(
-    "Drop CSV and Excel files here:", 
+    "Drop Daily CSV Files Here:", 
     accept_multiple_files=True, 
-    type=['csv', 'xlsx']
+    type=['csv']
 )
+
+# Hardcoded Permanent Master Directory Path inside GitHub
+MASTER_FILE_NAME = "Updated Office Names 29.05.2026.xlsx - Combined and Updated.csv"
 
 # 2. OPERATIONAL CORE UTILITIES
 def extract_report_date(files_dict):
@@ -40,16 +43,15 @@ def calc_pct(disposed, received):
 # 3. BACKGROUND PROCESSING ENGINE
 if uploaded_files:
     files = {f.name: f for f in uploaded_files}
-    master_key = [k for k in files.keys() if "Updated Office" in k or "Master" in k]
     
-    if not master_key:
-        st.error("🚨 Missing Master Directory File! Please include 'Updated Office Names...' file.")
+    # Structural verification check for the permanent master file inside the workspace
+    if not os.path.exists(MASTER_FILE_NAME):
+        st.error(f"🚨 Backend Alignment Error: The permanent directory file '{MASTER_FILE_NAME}' was not found in the root repository path. Please upload it to your GitHub repository.")
     else:
         with st.spinner("Processing volume aggregation matrices and compiling visual worksheets..."):
             try:
-                # Read Master Directory
-                m_file = files[master_key[0]]
-                master_df = pd.read_csv(m_file) if m_file.name.endswith('.csv') else pd.read_excel(m_file)
+                # Read Permanent Master Directory from Repository Storage natively
+                master_df = pd.read_csv(MASTER_FILE_NAME)
                 master_df.dropna(subset=['Office ID'], inplace=True)
                 master_df['Office ID'] = master_df['Office ID'].astype(str).str.strip()
                 master_df = master_df.drop_duplicates(subset=['Office ID'])
